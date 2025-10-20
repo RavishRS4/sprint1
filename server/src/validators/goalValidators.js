@@ -21,3 +21,10 @@ export const goalContributionValidator = [
   body("amount").isFloat({ gt: 0 }),
   body("contributionDate").isISO8601().toDate()
 ];
+
+export const contributionIdParam = [param("contributionId").isInt({ min: 1 })];
+
+export const updateGoalContributionValidator = [
+  body("amount").isFloat({ gt: 0 }),
+  body("contributionDate").isISO8601().toDate()
+];

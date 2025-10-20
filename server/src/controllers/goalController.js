@@ -5,9 +5,9 @@ import {
   getGoalById,
   updateGoal,
   deleteGoal,
-  addGoalContribution,
   getGoalContributions
 } from "../models/goalModel.js";
+import pool from "../config/db.js";
 
 const determineGoalStatus = (goal) => {
   if (!goal) return "active";
@@ -132,15 +132,153 @@ export const addContributionHandler = async (req, res, next) => {
       return res.status(404).json({ message: "Goal not found" });
     }
 
-    await addGoalContribution({
-      goalId: goal.id,
-      amount: req.body.amount,
-      contributionDate: req.body.contributionDate
-    });
+    const conn = await pool.getConnection();
+    try {
+      await conn.beginTransaction();
+      await conn.execute(
+        `INSERT INTO goal_contributions (goal_id, amount, contribution_date) VALUES (?, ?, ?)`,
+        [goal.id, req.body.amount, req.body.contributionDate]
+      );
+      await conn.execute(
+        `INSERT INTO transactions (user_id, type, category, amount, description, transaction_date) VALUES (?, ?, ?, ?, ?, ?)`,
+        [
+          req.user.id,
+          "expense",
+          "Goal Contribution",
+          req.body.amount,
+          `Contribution to goal: ${goal.name}`,
+          req.body.contributionDate
+        ]
+      );
+      await conn.commit();
+    } catch (e) {
+      await conn.rollback();
+      throw e;
+    } finally {
+      conn.release();
+    }
 
     const updatedGoal = await getGoalById(req.params.id, req.user.id);
     const normalized = normalizeGoal(await syncGoalStatus(updatedGoal));
     return res.status(201).json({ goal: normalized });
+  } catch (error) {
+    next(error);
+  }
+};
+
+export const updateContributionHandler = async (req, res, next) => {
+  try {
+    const errors = validationResult(req);
+    if (!errors.isEmpty()) {
+      return res.status(422).json({ errors: errors.array() });
+    }
+
+    const goal = await getGoalById(req.params.id, req.user.id);
+    if (!goal) {
+      return res.status(404).json({ message: "Goal not found" });
+    }
+
+    const conn = await pool.getConnection();
+    try {
+      const [rows] = await conn.execute(
+        `SELECT gc.id, gc.goal_id, gc.amount AS old_amount, g.name AS goal_name
+         FROM goal_contributions gc
+         INNER JOIN goals g ON g.id = gc.goal_id
+         WHERE gc.id = ? AND g.user_id = ? AND g.id = ?
+         LIMIT 1`,
+        [req.params.contributionId, req.user.id, req.params.id]
+      );
+      const existing = rows[0];
+      if (!existing) {
+        conn.release();
+        return res.status(404).json({ message: "Contribution not found" });
+      }
+
+      const newAmount = Number(req.body.amount);
+      const oldAmount = Number(existing.old_amount);
+      const delta = newAmount - oldAmount;
+
+      await conn.beginTransaction();
+      await conn.execute(
+        `UPDATE goal_contributions SET amount = ?, contribution_date = ? WHERE id = ?`,
+        [newAmount, req.body.contributionDate, existing.id]
+      );
+
+      if (delta !== 0) {
+        if (delta > 0) {
+          await conn.execute(
+            `INSERT INTO transactions (user_id, type, category, amount, description, transaction_date)
+             VALUES (?, 'expense', 'Goal Contribution (edit)', ?, ?, ?)`,
+            [req.user.id, delta, `Increase contribution to goal: ${existing.goal_name}`, req.body.contributionDate]
+          );
+        } else {
+          const refund = Math.abs(delta);
+          await conn.execute(
+            `INSERT INTO transactions (user_id, type, category, amount, description, transaction_date)
+             VALUES (?, 'income', 'Salary', ?, ?, ?)`,
+            [req.user.id, refund, `Decrease contribution to goal: ${existing.goal_name}`, req.body.contributionDate]
+          );
+        }
+      }
+
+      await conn.commit();
+    } catch (e) {
+      await conn.rollback();
+      throw e;
+    } finally {
+      conn.release();
+    }
+
+    const updatedGoal = await getGoalById(req.params.id, req.user.id);
+    const normalized = normalizeGoal(await syncGoalStatus(updatedGoal));
+    return res.json({ goal: normalized });
+  } catch (error) {
+    next(error);
+  }
+};
+
+export const deleteContributionHandler = async (req, res, next) => {
+  try {
+    const goal = await getGoalById(req.params.id, req.user.id);
+    if (!goal) {
+      return res.status(404).json({ message: "Goal not found" });
+    }
+
+    const conn = await pool.getConnection();
+    try {
+      const [rows] = await conn.execute(
+        `SELECT gc.id, gc.goal_id, gc.amount, gc.contribution_date, g.name AS goal_name
+         FROM goal_contributions gc
+         INNER JOIN goals g ON g.id = gc.goal_id
+         WHERE gc.id = ? AND g.user_id = ? AND g.id = ?
+         LIMIT 1`,
+        [req.params.contributionId, req.user.id, req.params.id]
+      );
+      const existing = rows[0];
+      if (!existing) {
+        conn.release();
+        return res.status(404).json({ message: "Contribution not found" });
+      }
+
+      await conn.beginTransaction();
+      await conn.execute(`DELETE FROM goal_contributions WHERE id = ?`, [existing.id]);
+      const today = new Date().toISOString().slice(0, 10);
+      await conn.execute(
+        `INSERT INTO transactions (user_id, type, category, amount, description, transaction_date)
+         VALUES (?, 'income', 'Salary', ?, ?, ?)`,
+        [req.user.id, existing.amount, `Delete contribution to goal: ${existing.goal_name}`, today]
+      );
+      await conn.commit();
+    } catch (e) {
+      await conn.rollback();
+      throw e;
+    } finally {
+      conn.release();
+    }
+
+    const updatedGoal = await getGoalById(req.params.id, req.user.id);
+    const normalized = normalizeGoal(await syncGoalStatus(updatedGoal));
+    return res.json({ goal: normalized, message: "Contribution deleted" });
   } catch (error) {
     next(error);
   }

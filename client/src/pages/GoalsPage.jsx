@@ -7,7 +7,9 @@ import {
   updateGoal,
   deleteGoal,
   addContribution,
-  fetchContributions
+  fetchContributions,
+  updateContribution,
+  deleteContribution
 } from "../services/goals.js";
 import { formatCurrency, formatDate } from "../lib/format.js";
 
@@ -30,6 +32,7 @@ const GoalsPage = () => {
   const [contributionModalOpen, setContributionModalOpen] = useState(false);
   const [selectedGoal, setSelectedGoal] = useState(null);
   const [contributions, setContributions] = useState([]);
+  const [editingContribution, setEditingContribution] = useState(null);
   const goalForm = useForm({ defaultValues: goalDefaults });
   const contributionForm = useForm({ defaultValues: contributionDefaults });
 
@@ -73,6 +76,7 @@ const GoalsPage = () => {
     contributionForm.reset(contributionDefaults);
     const { contributions: data } = await fetchContributions(goal.id);
     setContributions(data);
+    setEditingContribution(null);
     setContributionModalOpen(true);
   };
 
@@ -81,6 +85,7 @@ const GoalsPage = () => {
     setContributionModalOpen(false);
     setSelectedGoal(null);
     setContributions([]);
+    setEditingContribution(null);
   };
 
   const submitGoal = goalForm.handleSubmit(async (formData) => {
@@ -105,12 +110,40 @@ const GoalsPage = () => {
       amount: Number(formData.amount),
       contributionDate: formatDate(formData.contributionDate)
     };
-    const { goal } = await addContribution(selectedGoal.id, payload);
+    let goal;
+    if (editingContribution) {
+      ({ goal } = await updateContribution(selectedGoal.id, editingContribution.id, payload));
+    } else {
+      ({ goal } = await addContribution(selectedGoal.id, payload));
+    }
     setGoals((prev) => prev.map((item) => (item.id === goal.id ? goal : item)));
     const { contributions: updated } = await fetchContributions(selectedGoal.id);
     setContributions(updated);
     contributionForm.reset(contributionDefaults);
+    setEditingContribution(null);
   });
+
+  const startEditContribution = (item) => {
+    setEditingContribution(item);
+    contributionForm.reset({
+      amount: Number(item.amount),
+      contributionDate: formatDate(item.contribution_date)
+    });
+  };
+
+  const removeContributionItem = async (item) => {
+    if (!selectedGoal) return;
+    const ok = window.confirm("Delete this contribution?");
+    if (!ok) return;
+    const { goal } = await deleteContribution(selectedGoal.id, item.id);
+    setGoals((prev) => prev.map((g) => (g.id === goal.id ? goal : g)));
+    const { contributions: updated } = await fetchContributions(selectedGoal.id);
+    setContributions(updated);
+    if (editingContribution && editingContribution.id === item.id) {
+      setEditingContribution(null);
+      contributionForm.reset(contributionDefaults);
+    }
+  };
 
   const removeGoal = async (goalId) => {
     await deleteGoal(goalId);
@@ -344,7 +377,7 @@ const GoalsPage = () => {
               type="submit"
               className="rounded-lg bg-primary-600 px-4 py-2 text-sm font-semibold text-white hover:bg-primary-700"
             >
-              Add Contribution
+              {editingContribution ? "Save Changes" : "Add Contribution"}
             </button>
           </div>
         </form>
@@ -355,6 +388,7 @@ const GoalsPage = () => {
               <tr>
                 <th className="px-4 py-2">Date</th>
                 <th className="px-4 py-2">Amount</th>
+                <th className="px-4 py-2">Actions</th>
               </tr>
             </thead>
             <tbody>
@@ -363,11 +397,27 @@ const GoalsPage = () => {
                   <tr key={item.id} className="border-t text-slate-600">
                     <td className="px-4 py-2">{formatDate(item.contribution_date)}</td>
                     <td className="px-4 py-2">{formatCurrency(item.amount)}</td>
+                    <td className="px-4 py-2">
+                      <button
+                        type="button"
+                        onClick={() => startEditContribution(item)}
+                        className="rounded-md border border-slate-200 px-2 py-1 text-xs font-semibold text-slate-600 hover:bg-slate-50"
+                      >
+                        Edit
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => removeContributionItem(item)}
+                        className="ml-2 rounded-md border border-rose-200 px-2 py-1 text-xs font-semibold text-rose-600 hover:bg-rose-50"
+                      >
+                        Delete
+                      </button>
+                    </td>
                   </tr>
                 ))
               ) : (
                 <tr>
-                  <td colSpan={2} className="px-4 py-4 text-center text-slate-400">
+                  <td colSpan={3} className="px-4 py-4 text-center text-slate-400">
                     No contributions yet.
                   </td>
                 </tr>

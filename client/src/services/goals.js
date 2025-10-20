@@ -29,3 +29,13 @@ export const fetchContributions = async (id) => {
   const { data } = await api.get(`/goals/${id}/contributions`);
   return data;
 };
+
+export const updateContribution = async (goalId, contributionId, payload) => {
+  const { data } = await api.put(`/goals/${goalId}/contributions/${contributionId}`, payload);
+  return data;
+};
+
+export const deleteContribution = async (goalId, contributionId) => {
+  const { data } = await api.delete(`/goals/${goalId}/contributions/${contributionId}`);
+  return data;
+};

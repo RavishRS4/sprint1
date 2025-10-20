@@ -90,3 +90,19 @@ export const getGoalContributions = async (goalId, userId) => {
                ORDER BY gc.contribution_date DESC`;
   return query(sql, [goalId, userId]);
 };
+
+export const getContributionById = async (id, userId) => {
+  const sql = `SELECT gc.*
+               FROM goal_contributions gc
+               INNER JOIN goals g ON g.id = gc.goal_id
+               WHERE gc.id = ? AND g.user_id = ?
+               LIMIT 1`;
+  const rows = await query(sql, [id, userId]);
+  return rows[0] ?? null;
+};
+
+export const updateGoalContribution = async (id, userId, { amount, contributionDate }) => {
+  const sql = `UPDATE goal_contributions SET amount = ?, contribution_date = ? WHERE id = ?`;
+  await query(sql, [amount, contributionDate, id]);
+  return getContributionById(id, userId);
+};
